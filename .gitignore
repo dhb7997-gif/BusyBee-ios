@@ -1,0 +1,38 @@
+# Xcode & Swift build artifacts
+DerivedData/
+build/
+Build/
+*.build/
+
+# User-specific settings
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.swiftpm/
+.xcodeproj/project.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+Package.resolved
+
+# CocoaPods / Carthage
+Pods/
+Carthage/
+
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Generated files
+*.moved-aside
+*.storyboardc
+*.xcuserdatad
+
+# Swift Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Temporary files
+*.tmp
+*.swp
