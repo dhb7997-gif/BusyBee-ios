@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var budgetViewModel: BudgetViewModel
+    @EnvironmentObject private var settings: AppSettings
     @State private var showingAddExpense = false
 
     var body: some View {
@@ -29,6 +30,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingAddExpense) {
             AddExpenseView(isPresented: $showingAddExpense)
                 .environmentObject(budgetViewModel)
+                .environmentObject(settings)
         }
         .environmentObject(budgetViewModel)
     }
@@ -36,7 +38,10 @@ struct ContentView: View {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
+        let settings = AppSettings.shared
+        let store = DailyLimitStore.shared
         ContentView()
-            .environmentObject(BudgetViewModel())
+            .environmentObject(BudgetViewModel(dailyLimitStore: store, settings: settings))
+            .environmentObject(settings)
     }
 }

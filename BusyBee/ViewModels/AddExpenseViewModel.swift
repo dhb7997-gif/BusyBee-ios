@@ -26,12 +26,12 @@ final class AddExpenseViewModel: ObservableObject {
         notes = ""
     }
 
-    func makeExpense() -> Expense? {
+    func makeExpense(date: Date = Date()) -> Expense? {
         let trimmedVendor = vendor.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedVendor.isEmpty,
               let decimal = Decimal(string: amountString.filter { !$0.isWhitespace }) else {
             return nil
         }
-        return Expense(vendor: trimmedVendor, amount: decimal, category: category, notes: notes)
+        return Expense(vendor: trimmedVendor, amount: decimal, category: category, date: date, notes: notes)
     }
 }

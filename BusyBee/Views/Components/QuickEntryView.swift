@@ -1,40 +1,30 @@
 import SwiftUI
+import UIKit
 
 struct QuickEntryView: View {
     @EnvironmentObject private var budgetViewModel: BudgetViewModel
+    @EnvironmentObject private var settings: AppSettings
     @State private var selectedAmount: Decimal?
-    @State private var selectedVendor: String?
     @State private var selectedCategory: ExpenseCategory?
     @State private var showingCustomAmount = false
-    @State private var showingCustomVendor = false
+    @State private var showingVendorEntry = false
     @State private var isSaving = false
+    @State private var showingReceiptCapture = false
+    @State private var receiptAlertTitle = ""
+    @State private var receiptAlertMessage = ""
+    @State private var showingReceiptAlert = false
 
-    private let quickAmounts: [Decimal] = [5, 10, 15, 25, 50, 75]
-    private let quickCategories: [ExpenseCategory] = [.food, .shopping, .transportation, .entertainment, .personal, .other]
+    private let quickCategories: [ExpenseCategory] = ExpenseCategory.allCases
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 16) {
             StepHeader(step: 1, title: "How much did you spend?")
             amountGrid
 
-            StepHeader(step: 2, title: "Where did you spend it?", isEnabled: selectedAmount != nil)
-            vendorGrid
-
-            StepHeader(step: 3, title: "Pick a category", isEnabled: selectedVendor != nil)
+            StepHeader(step: 2, title: "What category?", isEnabled: selectedAmount != nil)
             categoryGrid
-
-            Button(action: logExpense) {
-                Text(isSaving ? "Saving…" : "Log Expense")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(canLog ? Color.accentColor : Color.accentColor.opacity(0.2))
-                    .foregroundColor(canLog ? .white : Color.accentColor)
-                    .cornerRadius(18)
-            }
-            .disabled(!canLog || isSaving)
         }
-        .padding(24)
+        .padding(20)
         .background(
             LinearGradient(colors: [Color(.systemBackground), Color(.systemBackground).opacity(0.9)], startPoint: .topLeading, endPoint: .bottomTrailing)
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
@@ -47,28 +37,64 @@ struct QuickEntryView: View {
         .sheet(isPresented: $showingCustomAmount) {
             CustomAmountEntryView(isPresented: $showingCustomAmount, initialAmount: selectedAmount) { amount in
                 selectedAmount = amount
-                selectedVendor = nil
+                selectedCategory = nil
+                // Show vendor entry screen
+                showingVendorEntry = true
+                showingCustomAmount = false
+            }
+        }
+        .sheet(isPresented: $showingVendorEntry) {
+            if let amount = selectedAmount {
+                VendorEntryView(
+                    isPresented: $showingVendorEntry,
+                    initialVendor: nil,
+                    amount: amount
+                ) { vendor, category in
+                    Task {
+                        if let category = category {
+                            await recordExpense(vendor: vendor, amount: amount, category: category)
+                        } else {
+                            // Known vendor - already logged
+                            await MainActor.run {
+                                withAnimation(.spring()) {
+                                    selectedAmount = nil
+                                    selectedCategory = nil
+                                }
+                            }
+                        }
+                    }
+                }
+                .environmentObject(budgetViewModel)
+            }
+        }
+        .sheet(isPresented: $showingReceiptCapture) {
+            ReceiptCaptureView { image in
+                handleReceiptCaptureResult(image)
+            }
+        }
+        .onChange(of: settings.presetAmounts) { _, _ in
+            // Reset selection if the selected amount is no longer available
+            if let selected = selectedAmount, !settings.presetAmounts.contains(selected) {
+                selectedAmount = nil
                 selectedCategory = nil
             }
         }
-        .sheet(isPresented: $showingCustomVendor) {
-            VendorEntryView(isPresented: $showingCustomVendor, initialVendor: selectedVendor) { vendor in
-                selectedVendor = vendor
-                selectedCategory = budgetViewModel.categoryHint(forVendor: vendor)
-            }
+        .alert(receiptAlertTitle, isPresented: $showingReceiptAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(receiptAlertMessage)
         }
     }
 
     private var canLog: Bool {
-        selectedAmount != nil && selectedVendor != nil && selectedCategory != nil
+        selectedAmount != nil && selectedCategory != nil
     }
 
     private var amountGrid: some View {
         AdaptiveGrid(columns: 3) {
-            ForEach(quickAmounts, id: \.self) { amount in
+            ForEach(settings.presetAmounts, id: \.self) { amount in
                 SelectionTile(isSelected: selectedAmount == amount, title: amount.currencyString) {
                     selectedAmount = amount
-                    selectedVendor = nil
                     selectedCategory = nil
                 }
             }
@@ -78,25 +104,16 @@ struct QuickEntryView: View {
         }
     }
 
-    private var vendorGrid: some View {
+
+    private var categoryGrid: some View {
         AdaptiveGrid(columns: 3) {
-            let vendors = vendorTiles
-            let suggestions = vendors.compactMap { tile -> String? in
-                if case let .suggestion(value) = tile.kind {
-                    return value
-                }
-                return nil
-            }
-            ForEach(vendors.indices, id: \.self) { index in
-                let vendor = vendors[index]
-                SelectionTile(isSelected: isVendorSelected(vendor, suggestions: suggestions), title: vendor.displayName) {
+            ForEach(quickCategories, id: \.self) { category in
+                SelectionTile(isSelected: selectedCategory == category, title: settings.displayName(for: category)) {
                     guard selectedAmount != nil else { return }
-                    switch vendor.kind {
-                    case .suggestion(let value):
-                        selectedVendor = value
-                        selectedCategory = budgetViewModel.categoryHint(forVendor: value)
-                    case .custom:
-                        showingCustomVendor = true
+                    selectedCategory = category
+                    // Auto-log the expense when both amount and category are selected
+                    Task {
+                        await autoLogExpense()
                     }
                 }
                 .disabled(selectedAmount == nil)
@@ -105,57 +122,56 @@ struct QuickEntryView: View {
         }
     }
 
-    private var categoryGrid: some View {
-        AdaptiveGrid(columns: 3) {
-            ForEach(quickCategories, id: \.self) { category in
-                SelectionTile(isSelected: selectedCategory == category, title: category.rawValue) {
-                    guard selectedVendor != nil else { return }
-                    selectedCategory = category
-                }
-                .disabled(selectedVendor == nil)
-                .opacity(selectedVendor == nil ? 0.5 : 1)
+    private var isCustomAmountSelected: Bool {
+        guard let amount = selectedAmount else { return showingCustomAmount }
+        return !settings.presetAmounts.contains(amount)
+    }
+
+
+    private func autoLogExpense() async {
+        guard canLog, !isSaving,
+              let amount = selectedAmount,
+              let category = selectedCategory else { return }
+        
+        isSaving = true
+        // Use a default vendor since we removed vendor selection
+        await recordExpense(vendor: "Quick Entry", amount: amount, category: category)
+        await MainActor.run {
+            isSaving = false
+        }
+    }
+
+    private func recordExpense(vendor: String, amount: Decimal, category: ExpenseCategory) async {
+        await budgetViewModel.addExpense(vendor: vendor, amount: amount, category: category)
+        await MainActor.run {
+            withAnimation(.spring()) {
+                selectedAmount = nil
+                selectedCategory = nil
+            }
+            if settings.receiptStorageEnabled {
+                showingReceiptCapture = true
             }
         }
     }
 
-    private var isCustomAmountSelected: Bool {
-        guard let amount = selectedAmount else { return showingCustomAmount }
-        return !quickAmounts.contains(amount)
-    }
+    private func handleReceiptCaptureResult(_ image: UIImage?) {
+        showingReceiptCapture = false
+        guard let image else { return }
 
-    private var vendorTiles: [VendorTile] {
-        var tiles: [VendorTile] = budgetViewModel
-            .suggestedVendors(limit: 5)
-            .map { VendorTile(kind: .suggestion($0)) }
-        tiles.append(VendorTile(kind: .custom))
-        return tiles
-    }
-
-    private func isVendorSelected(_ vendor: VendorTile, suggestions: [String]) -> Bool {
-        guard let current = selectedVendor else { return false }
-        switch vendor.kind {
-        case .suggestion(let value):
-            return current.caseInsensitiveCompare(value) == .orderedSame
-        case .custom:
-            return !suggestions.contains { current.caseInsensitiveCompare($0) == .orderedSame }
-        }
-    }
-
-    private func logExpense() {
-        guard canLog, !isSaving,
-              let amount = selectedAmount,
-              let vendor = selectedVendor,
-              let category = selectedCategory else { return }
-        isSaving = true
-        Task {
-            await budgetViewModel.addExpense(vendor: vendor, amount: amount, category: category)
-            await MainActor.run {
-                withAnimation(.spring()) {
-                    selectedAmount = nil
-                    selectedVendor = nil
-                    selectedCategory = nil
-                }
-                isSaving = false
+        ReceiptStorageService.save(image: image) { result in
+            switch result {
+            case .success:
+                receiptAlertTitle = "Receipt Saved"
+                receiptAlertMessage = "Your receipt photo has been stored in Photos."
+                showingReceiptAlert = true
+            case .denied:
+                receiptAlertTitle = "Permission Needed"
+                receiptAlertMessage = "Enable photo access in Settings to save receipts."
+                showingReceiptAlert = true
+            case .failure:
+                receiptAlertTitle = "Save Failed"
+                receiptAlertMessage = "We couldn't save your receipt. Please try again."
+                showingReceiptAlert = true
             }
         }
     }
@@ -167,16 +183,16 @@ private struct StepHeader: View {
     var isEnabled: Bool = true
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text("Step \(step)")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.white)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 8)
                 .background(isEnabled ? Color.accentColor : Color.gray.opacity(0.4))
                 .clipShape(Capsule())
             Text(title)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(isEnabled ? .primary : .secondary)
             Spacer()
         }
@@ -191,10 +207,10 @@ private struct SelectionTile: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.headline)
+                .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
-                .frame(height: 70)
+                .frame(height: 68)
                 .background(
                     ZStack {
                         if isSelected {
@@ -202,8 +218,8 @@ private struct SelectionTile: View {
                         } else {
                             Color(.secondarySystemBackground)
                         }
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
                     }
                 )
                 .cornerRadius(18)
@@ -218,35 +234,20 @@ private struct AdaptiveGrid<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: columns), spacing: 14) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: columns), spacing: 9) {
             content
         }
     }
 }
 
-private struct VendorTile: Identifiable {
-    enum Kind {
-        case suggestion(String)
-        case custom
-    }
-
-    let id = UUID()
-    let kind: Kind
-
-    var displayName: String {
-        switch kind {
-        case .suggestion(let value):
-            return value
-        case .custom:
-            return "Custom"
-        }
-    }
-}
 
 struct QuickEntryView_Previews: PreviewProvider {
     static var previews: some View {
+        let settings = AppSettings.shared
+        let store = DailyLimitStore.shared
         QuickEntryView()
-            .environmentObject(BudgetViewModel())
+            .environmentObject(BudgetViewModel(dailyLimitStore: store, settings: settings))
+            .environmentObject(settings)
             .padding()
             .previewLayout(.sizeThatFits)
     }

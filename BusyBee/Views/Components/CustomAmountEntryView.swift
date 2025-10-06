@@ -5,13 +5,13 @@ struct CustomAmountEntryView: View {
     var initialAmount: Decimal?
     var onConfirm: (Decimal) -> Void
 
-    @State private var input: String = "0"
+    @State private var input: String = "000"
 
     private let keypad: [[String]] = [
         ["1", "2", "3"],
         ["4", "5", "6"],
         ["7", "8", "9"],
-        [".", "0", "⌫"]
+        ["⌫", "0", "C"]
     ]
 
     var body: some View {
@@ -54,7 +54,7 @@ struct CustomAmountEntryView: View {
                     .background(Color(.secondarySystemBackground))
                     .cornerRadius(16)
 
-                    Button("Add Expense") {
+                    Button("Vendor/Category") {
                         confirm()
                     }
                     .frame(maxWidth: .infinity)
@@ -76,73 +76,55 @@ struct CustomAmountEntryView: View {
                     }
                 }
             }
-        }
-        .onAppear {
-            if let initial = initialAmount {
-                input = NSDecimalNumber(decimal: initial).stringValue
+            .onAppear {
+                if let initial = initialAmount {
+                    // Convert decimal to right-to-left input (cents)
+                    let cents = Int(NSDecimalNumber(decimal: initial * 100).intValue)
+                    input = String(format: "%03d", cents)
+                }
             }
         }
     }
 
     private var displayAmount: String {
-        if input.isEmpty || input == "." {
+        if input.isEmpty {
             return "$0.00"
         }
-        let sanitized = input.hasSuffix(".") ? String(input.dropLast()) : input
-        let decimal = Decimal(string: sanitized) ?? .zero
-        return decimal.currencyString
+        // Convert right-to-left input to decimal
+        let cents = Int(input) ?? 0
+        let dollars = Decimal(cents) / 100
+        return dollars.currencyString
     }
 
     private var canConfirm: Bool {
-        guard let decimal = Decimal(string: sanitizedInput) else { return false }
-        return decimal > .zero
-    }
-
-    private var sanitizedInput: String {
-        if input.hasSuffix(".") {
-            return String(input.dropLast())
-        }
-        if input.isEmpty {
-            return "0"
-        }
-        return input
+        let cents = Int(input) ?? 0
+        return cents > 0
     }
 
     private func handleKey(_ key: String) {
         switch key {
         case "⌫":
-            if !input.isEmpty {
+            if input.count > 3 { // Keep at least "000"
                 input.removeLast()
             }
-            if input.isEmpty {
-                input = "0"
-            }
-        case ".":
-            if !input.contains(".") {
-                input.append(key)
-            }
+        case "C":
+            input = "000" // Clear to $0.00
         default:
             appendDigit(key)
         }
     }
 
     private func appendDigit(_ digit: String) {
-        if input == "0" && digit != "." {
-            input = digit
-            return
+        if input.count < 6 { // Limit to $999.99
+            input.append(digit)
         }
-        if let dotIndex = input.firstIndex(of: ".") {
-            let decimals = input[input.index(after: dotIndex)...]
-            if decimals.count >= 2 {
-                return
-            }
-        }
-        input.append(digit)
     }
 
     private func confirm() {
-        guard let decimal = Decimal(string: sanitizedInput), decimal > .zero else { return }
-        onConfirm(decimal)
+        let cents = Int(input) ?? 0
+        guard cents > 0 else { return }
+        let dollars = Decimal(cents) / 100
+        onConfirm(dollars)
         isPresented = false
     }
 }

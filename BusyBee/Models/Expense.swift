@@ -1,6 +1,6 @@
 import Foundation
 
-enum ExpenseCategory: String, CaseIterable, Codable, Identifiable {
+enum ExpenseCategory: String, CaseIterable, Codable, Identifiable, Sendable {
     case food = "Food"
     case shopping = "Shopping"
     case transportation = "Transportation"
@@ -9,9 +9,11 @@ enum ExpenseCategory: String, CaseIterable, Codable, Identifiable {
     case other = "Other"
 
     var id: String { rawValue }
+
+    var defaultTitle: String { rawValue }
 }
 
-struct Expense: Identifiable, Codable, Hashable {
+struct Expense: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     var vendor: String
     var amount: Decimal
