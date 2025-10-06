@@ -139,13 +139,19 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .onAppear {
-                dailyLimitString = budgetViewModel.dailyLimit.currencyString
+                dailyLimitString = budgetViewModel.allowanceAmount.currencyString
+            }
+            .onChange(of: settings.budgetPeriod) { _, _ in
+                dailyLimitString = budgetViewModel.allowanceAmount.currencyString
+            }
+            .onReceive(budgetViewModel.$allowanceAmount) { newValue in
+                dailyLimitString = newValue.currencyString
             }
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Button("Cancel") {
                         // Revert to current value and dismiss
-                        dailyLimitString = budgetViewModel.dailyLimit.currencyString
+                        dailyLimitString = budgetViewModel.allowanceAmount.currencyString
                         limitFieldFocused = false
                     }
                     Spacer()
@@ -156,11 +162,11 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showingLimitEditor) {
                 SpendingLimitEditorView(
-                    initialAmount: budgetViewModel.dailyLimit,
+                    initialAmount: budgetViewModel.allowanceAmount,
                     onCancel: { showingLimitEditor = false },
                     onSave: { newAmount in
                         budgetViewModel.setDailyLimit(newAmount)
-                        dailyLimitString = newAmount.currencyString
+                        dailyLimitString = budgetViewModel.allowanceAmount.currencyString
                         showingLimitEditor = false
                     }
                 )
@@ -175,10 +181,10 @@ struct SettingsView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let decimal = Decimal(string: sanitized), decimal >= 0 {
             budgetViewModel.setDailyLimit(decimal)
-            dailyLimitString = decimal.currencyString
+            dailyLimitString = budgetViewModel.allowanceAmount.currencyString
         } else {
             // If invalid, revert
-            dailyLimitString = budgetViewModel.dailyLimit.currencyString
+            dailyLimitString = budgetViewModel.allowanceAmount.currencyString
         }
         limitFieldFocused = false
     }

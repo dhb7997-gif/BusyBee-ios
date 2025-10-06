@@ -75,8 +75,8 @@ final class AppSettings: ObservableObject {
         let defaultAnimations = defaults.object(forKey: Keys.animationsEnabled) as? Bool ?? true
         let defaultHaptics = defaults.object(forKey: Keys.hapticsEnabled) as? Bool ?? true
         let defaultPeriod = BudgetPeriod(rawValue: defaults.string(forKey: Keys.budgetPeriod) ?? BudgetPeriod.daily.rawValue) ?? .daily
-        let defaultMorningReminders = defaults.object(forKey: Keys.morningReminders) as? Bool ?? true
-        let defaultEndOfDaySummary = defaults.object(forKey: Keys.endOfDaySummary) as? Bool ?? true
+        let defaultMorningReminders = defaults.object(forKey: Keys.morningReminders) as? Bool ?? false
+        let defaultEndOfDaySummary = defaults.object(forKey: Keys.endOfDaySummary) as? Bool ?? false
         let defaultReceiptStorage = defaults.object(forKey: Keys.receiptStorageEnabled) as? Bool ?? false
 
         // Load preset amounts (default: 5, 10, 15, 25, 50)

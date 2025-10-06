@@ -21,7 +21,7 @@ struct BalanceSummaryCard: View {
             if budgetPeriod != .daily {
                 HStack {
                     VStack(alignment: .leading) {
-                        Text("Remaining This \(budgetPeriod.rawValue)")
+                        Text(budgetPeriod == .weekly ? "Remaining This Week" : "Remaining This Month")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                         Text(weeklyRemaining.currencyString)

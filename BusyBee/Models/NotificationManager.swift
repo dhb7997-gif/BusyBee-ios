@@ -7,24 +7,16 @@ class NotificationManager: ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
     
     static let shared = NotificationManager()
-    
-    private init() {
-        requestPermission()
-    }
-    
-    private func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
-            if let error = error {
-                print("Notification permission error: \(error)")
-            }
-        }
-    }
+
+    private init() {}
     
     func updateMorningReminders(enabled: Bool) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["morning-reminder"])
         
         guard enabled else { return }
-        
+
+        requestPermissionIfNeeded()
+
         let content = UNMutableNotificationContent()
         content.title = "Good Morning! 🌅"
         content.body = "Check your daily budget and start the day right!"
@@ -48,7 +40,9 @@ class NotificationManager: ObservableObject {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["end-of-day-summary"])
         
         guard enabled else { return }
-        
+
+        requestPermissionIfNeeded()
+
         let content = UNMutableNotificationContent()
         content.title = "End of Day Summary 📊"
         content.body = "How did you do with your budget today?"
@@ -69,26 +63,22 @@ class NotificationManager: ObservableObject {
     }
     
     func sendDeficitAlert(remaining: Decimal, totalSpent: Decimal) {
-        let content = UNMutableNotificationContent()
-        content.title = "⚠️ Over Budget!"
-        
-        // Secret Easter egg for the first deficit (one-time only)
-        let hasShownEasterEgg = UserDefaults.standard.bool(forKey: "hasShownEasterEgg")
-        if !hasShownEasterEgg {
-            content.body = "Uh oh, Lucy's got some 'splaining to do! 😄"
-            UserDefaults.standard.set(true, forKey: "hasShownEasterEgg")
-        } else {
-            content.body = "You're \(abs(remaining).currencyString) over your daily limit. Tomorrow is a fresh start!"
-        }
-        
-        content.sound = .default
-        
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: "deficit-alert-\(UUID().uuidString)", content: content, trigger: trigger)
-        
-        UNUserNotificationCenter.current().add(request) { error in
+        NotificationCenter.default.post(name: Self.deficitNotificationName, object: nil, userInfo: [
+            "amount": remaining,
+            "totalSpent": totalSpent
+        ])
+    }
+
+    static let deficitNotificationName = Notification.Name("com.busybee.deficitAlert")
+
+    private var permissionRequested = false
+
+    private func requestPermissionIfNeeded() {
+        guard !permissionRequested else { return }
+        permissionRequested = true
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
             if let error = error {
-                print("Deficit alert error: \(error)")
+                print("Notification permission error: \(error)")
             }
         }
     }

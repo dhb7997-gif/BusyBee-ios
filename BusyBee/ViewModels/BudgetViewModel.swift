@@ -5,6 +5,8 @@ import Combine
 final class BudgetViewModel: ObservableObject {
     @Published private(set) var expenses: [Expense] = []
     @Published var dailyLimit: Decimal
+    @Published private(set) var allowanceAmount: Decimal
+    @Published private(set) var allowanceStartDate: Date
     @Published private(set) var budgetState: DailyBudgetState
     @Published private(set) var weeklyRemaining: Decimal = .zero
 
@@ -35,16 +37,18 @@ final class BudgetViewModel: ObservableObject {
         calendar: Calendar = .current,
         expenseStore: ExpenseStore = ExpenseStore(),
         vendorTracker: VendorTracker = VendorTracker(),
-        dailyLimitStore: DailyLimitStore,
+        dailyLimitStore: DailyLimitStore = DailyLimitStore.shared,
         settings: AppSettings
     ) {
         self.dailyLimit = dailyLimit
+        self.allowanceAmount = dailyLimit
         self.calendar = calendar
         self.expenseStore = expenseStore
         self.vendorTracker = vendorTracker
         self.dailyLimitStore = dailyLimitStore
         self.settings = settings
         let today = calendar.startOfDay(for: Date())
+        self.allowanceStartDate = today
         let initialState = DailyBudget(date: today, dailyLimit: dailyLimit, rollover: .zero).updating(for: [])
         self.budgetState = initialState
         observeChanges()
@@ -54,6 +58,8 @@ final class BudgetViewModel: ObservableObject {
             if dailyLimitStore.isEmpty {
                 dailyLimitStore.recordDailyLimit(dailyLimit, for: Date())
             }
+            allowanceStartDate = calendar.startOfDay(for: Date())
+            allowanceAmount = displayAmount(for: settings.budgetPeriod, on: Date())
             do {
                 try await vendorTracker.load()
             } catch {
@@ -104,12 +110,13 @@ final class BudgetViewModel: ObservableObject {
 
     func setDailyLimit(_ newLimit: Decimal) {
         let clampedLimit = max(newLimit, 0)
-        if clampedLimit != dailyLimit {
-            dailyLimit = clampedLimit
-            // Record the historical daily limit for today
-            dailyLimitStore.recordDailyLimit(clampedLimit, for: Date())
-            recalculateBudget()
-        }
+        let today = calendar.startOfDay(for: Date())
+        let perDay = perDayAmount(for: clampedLimit, period: settings.budgetPeriod, date: today)
+        dailyLimit = perDay
+        allowanceAmount = clampedLimit
+        allowanceStartDate = today
+        dailyLimitStore.recordDailyLimit(perDay, for: today)
+        recalculateBudget()
     }
 
     func rolloverAmount(for date: Date) -> Decimal {
@@ -185,8 +192,15 @@ final class BudgetViewModel: ObservableObject {
             .store(in: &cancellables)
 
         settings.$budgetPeriod
-            .sink { [weak self] _ in
-                self?.recalculateBudget()
+            .sink { [weak self] newPeriod in
+                guard let self else { return }
+                let today = self.calendar.startOfDay(for: Date())
+                self.allowanceStartDate = today
+                self.allowanceAmount = self.displayAmount(for: newPeriod, on: Date())
+                let perDay = self.perDayAmount(for: self.allowanceAmount, period: newPeriod, date: today)
+                self.dailyLimit = perDay
+                self.dailyLimitStore.recordDailyLimit(perDay, for: today)
+                self.recalculateBudget()
             }
             .store(in: &cancellables)
     }
@@ -202,12 +216,14 @@ final class BudgetViewModel: ObservableObject {
         let periodRemaining = calculatePeriodRemaining(for: today, period: settings.budgetPeriod)
 
         if settings.budgetPeriod != .daily {
+            let perDayAllowance = periodAllowanceAverage(for: today, period: settings.budgetPeriod)
+            let spentToday = totalSpent(on: today)
             budgetState = DailyBudgetState(
                 date: today,
-                dailyLimit: todayLimit,
-                rollover: rollover,
-                totalSpent: totalSpent(on: today),
-                remaining: periodRemaining / getPeriodDivisor(for: today, period: settings.budgetPeriod)
+                dailyLimit: perDayAllowance,
+                rollover: .zero,
+                totalSpent: spentToday,
+                remaining: perDayAllowance - spentToday
             )
         }
 
@@ -220,6 +236,32 @@ final class BudgetViewModel: ObservableObject {
             .reduce(Decimal.zero) { $0 + $1.amount }
     }
 
+    private func perDayAmount(for amount: Decimal, period: BudgetPeriod, date: Date) -> Decimal {
+        switch period {
+        case .daily:
+            return amount
+        case .weekly:
+            return amount / Decimal(7)
+        case .monthly:
+            let days = getPeriodDivisor(for: date, period: .monthly)
+            guard days > 0 else { return .zero }
+            return amount / days
+        }
+    }
+
+    private func displayAmount(for period: BudgetPeriod, on date: Date) -> Decimal {
+        let perDay = dailyLimitStore.getDailyLimit(for: date)
+        switch period {
+        case .daily:
+            return perDay
+        case .weekly:
+            return perDay * Decimal(7)
+        case .monthly:
+            let days = getPeriodDivisor(for: date, period: .monthly)
+            return perDay * days
+        }
+    }
+
     private func getPeriodDivisor(for date: Date, period: BudgetPeriod) -> Decimal {
         switch period {
         case .daily:
@@ -227,9 +269,19 @@ final class BudgetViewModel: ObservableObject {
         case .weekly:
             return 7
         case .monthly:
-            let calendar = Calendar.current
             let range = calendar.range(of: .day, in: .month, for: date)!
             return Decimal(range.count)
+        }
+    }
+
+    private func periodAllowanceAverage(for date: Date, period: BudgetPeriod) -> Decimal {
+        switch period {
+        case .daily:
+            return dailyLimitStore.getDailyLimit(for: date)
+        case .weekly:
+            return perDayAmount(for: allowanceAmount, period: .weekly, date: date)
+        case .monthly:
+            return perDayAmount(for: allowanceAmount, period: .monthly, date: date)
         }
     }
     
@@ -241,34 +293,41 @@ final class BudgetViewModel: ObservableObject {
             return allowance - spent
         case .weekly:
             guard let interval = calendar.dateInterval(of: .weekOfYear, for: date) else { return .zero }
-            let allowance = totalAllowance(in: interval)
-            let spent = totalSpent(in: interval)
+            let startOfToday = calendar.startOfDay(for: date)
+            let perDay = perDayAmount(for: allowanceAmount, period: .weekly, date: date)
+            let remainingDays = daysRemaining(from: startOfToday, to: interval.end)
+            let allowance = perDay * Decimal(remainingDays)
+            let effectiveStart = max(allowanceStartDate, startOfToday)
+            let spent = totalSpent(from: effectiveStart, to: interval.end)
             return allowance - spent
         case .monthly:
             guard let interval = calendar.dateInterval(of: .month, for: date) else { return .zero }
-            let allowance = totalAllowance(in: interval)
-            let spent = totalSpent(in: interval)
+            let startOfToday = calendar.startOfDay(for: date)
+            let perDay = perDayAmount(for: allowanceAmount, period: .monthly, date: date)
+            let remainingDays = daysRemaining(from: startOfToday, to: interval.end)
+            let allowance = perDay * Decimal(remainingDays)
+            let effectiveStart = max(allowanceStartDate, startOfToday)
+            let spent = totalSpent(from: effectiveStart, to: interval.end)
             return allowance - spent
         }
     }
 
-    private func totalSpent(in interval: DateInterval) -> Decimal {
-        expenses
-            .filter { interval.contains($0.date) }
+    private func totalSpent(from start: Date, to end: Date) -> Decimal {
+        let normalizedStart = calendar.startOfDay(for: start)
+        return expenses
+            .filter { $0.date >= normalizedStart && $0.date < end }
             .reduce(Decimal.zero) { $0 + $1.amount }
     }
 
-    private func totalAllowance(in interval: DateInterval) -> Decimal {
-        var total: Decimal = .zero
-        var cursor = calendar.startOfDay(for: interval.start)
-        let end = calendar.startOfDay(for: interval.end)
-
+    private func daysRemaining(from start: Date, to end: Date) -> Int {
+        var count = 0
+        var cursor = start
         while cursor < end {
-            total += dailyLimitStore.getDailyLimit(for: cursor)
+            count += 1
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
             cursor = next
         }
-        return total
+        return count
     }
 
     private func persist() async {
