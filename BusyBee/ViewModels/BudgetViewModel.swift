@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 
 @MainActor
 final class BudgetViewModel: ObservableObject {
@@ -33,19 +34,20 @@ final class BudgetViewModel: ObservableObject {
     ]
 
     init(
-        dailyLimit: Decimal = Decimal(200),
+        dailyLimit: Decimal = Decimal(25),
         calendar: Calendar = .current,
         expenseStore: ExpenseStore = ExpenseStore(),
         vendorTracker: VendorTracker = VendorTracker(),
-        dailyLimitStore: DailyLimitStore = DailyLimitStore.shared,
+        dailyLimitStore: DailyLimitStore? = nil,
         settings: AppSettings
     ) {
+        let resolvedStore = dailyLimitStore ?? DailyLimitStore.shared
         self.dailyLimit = dailyLimit
         self.allowanceAmount = dailyLimit
         self.calendar = calendar
         self.expenseStore = expenseStore
         self.vendorTracker = vendorTracker
-        self.dailyLimitStore = dailyLimitStore
+        self.dailyLimitStore = resolvedStore
         self.settings = settings
         let today = calendar.startOfDay(for: Date())
         self.allowanceStartDate = today
@@ -55,8 +57,8 @@ final class BudgetViewModel: ObservableObject {
         Task {
             await loadExpenses()
             // Record initial daily limit for today if not already recorded
-            if dailyLimitStore.isEmpty {
-                dailyLimitStore.recordDailyLimit(dailyLimit, for: Date())
+            if resolvedStore.isEmpty {
+                resolvedStore.recordDailyLimit(dailyLimit, for: Date())
             }
             allowanceStartDate = calendar.startOfDay(for: Date())
             allowanceAmount = displayAmount(for: settings.budgetPeriod, on: Date())
@@ -78,31 +80,61 @@ final class BudgetViewModel: ObservableObject {
         }
     }
 
-    func addExpense(vendor: String, amount: Decimal, category: ExpenseCategory, notes: String? = nil, date: Date = Date()) async {
+    @discardableResult
+    func addExpense(vendor: String, amount: Decimal, category: ExpenseCategory, notes: String? = nil, date: Date = Date()) async -> Expense {
         var sanitizedAmount = amount
         if sanitizedAmount < 0 {
             sanitizedAmount = -sanitizedAmount
         }
         let expense = Expense(vendor: vendor, amount: sanitizedAmount, category: category, date: date, notes: notes)
         expenses.insert(expense, at: 0)
-        
+
         // Record vendor usage for smart tracking
         do {
             try await vendorTracker.recordUsage(vendor: vendor, category: category)
         } catch {
             print("Failed to record vendor usage: \(error)")
         }
-        
+
         recalculateBudget()
         await persist()
-        
+
         // Send notification only if you go into deficit spending
         if budgetState.remaining < 0 {
             NotificationManager.shared.sendDeficitAlert(remaining: budgetState.remaining, totalSpent: budgetState.totalSpent)
         }
+        return expense
+    }
+
+    @discardableResult
+    func attachReceipt(image: UIImage, to expenseID: UUID) async -> Bool {
+        do {
+            try await ReceiptStorageService.save(image: image, for: expenseID)
+            if let index = expenses.firstIndex(where: { $0.id == expenseID }) {
+                expenses[index].hasReceipt = true
+            }
+            await persist()
+            return true
+        } catch {
+            print("Failed to save receipt: \(error)")
+            return false
+        }
+    }
+
+    func removeReceipt(for expenseID: UUID) async {
+        await ReceiptStorageService.delete(for: expenseID)
+        if let index = expenses.firstIndex(where: { $0.id == expenseID }) {
+            expenses[index].hasReceipt = false
+        }
+        await persist()
+    }
+
+    func receiptImage(for expenseID: UUID) async -> UIImage? {
+        await ReceiptStorageService.load(for: expenseID)
     }
 
     func removeExpense(_ expense: Expense) async {
+        await ReceiptStorageService.delete(for: expense.id)
         expenses.removeAll { $0.id == expense.id }
         recalculateBudget()
         await persist()
@@ -176,12 +208,11 @@ final class BudgetViewModel: ObservableObject {
         return await vendorTracker.getTopVendors(limit: limit)
     }
     
-    func addExpenseWithKnownVendor(vendor: String, amount: Decimal) async -> Bool {
+    func addExpenseWithKnownVendor(vendor: String, amount: Decimal) async -> Expense? {
         guard let category = await getCategoryForVendor(vendor) else {
-            return false
+            return nil
         }
-        await addExpense(vendor: vendor, amount: amount, category: category)
-        return true
+        return await addExpense(vendor: vendor, amount: amount, category: category)
     }
 
     private func observeChanges() {
@@ -196,7 +227,7 @@ final class BudgetViewModel: ObservableObject {
                 guard let self else { return }
                 let today = self.calendar.startOfDay(for: Date())
                 self.allowanceStartDate = today
-                self.allowanceAmount = self.displayAmount(for: newPeriod, on: Date())
+                self.allowanceAmount = self.displayAmount(for: newPeriod, on: today)
                 let perDay = self.perDayAmount(for: self.allowanceAmount, period: newPeriod, date: today)
                 self.dailyLimit = perDay
                 self.dailyLimitStore.recordDailyLimit(perDay, for: today)

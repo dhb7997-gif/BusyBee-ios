@@ -3,8 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var budgetViewModel: BudgetViewModel
     @EnvironmentObject private var settings: AppSettings
-    @State private var showingSplash = true
-    @State private var splashTaskStarted = false
+    @State private var showingIntro = true
     @State private var deficitBanner: DeficitAlert?
 
     var body: some View {
@@ -20,24 +19,18 @@ struct RootView: View {
                             }
                         }
                         .transition(.move(edge: .top).combined(with: .opacity))
-                        .padding(.top, showingSplash ? 0 : 8)
+                        .padding(.top, showingIntro ? 0 : 8)
                     }
                 }
 
-            if showingSplash {
-                SplashView()
-                    .transition(.opacity.combined(with: .scale))
-                    .zIndex(1)
-            }
-        }
-        .task {
-            guard !splashTaskStarted else { return }
-            splashTaskStarted = true
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            await MainActor.run {
-                withAnimation(.easeOut(duration: 0.6)) {
-                    showingSplash = false
+            if showingIntro {
+                BeeLaunchOverlay {
+                    withAnimation(.easeOut(duration: 0.35)) {
+                        showingIntro = false
+                    }
                 }
+                .transition(.opacity)
+                .zIndex(1)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NotificationManager.deficitNotificationName)) { notification in

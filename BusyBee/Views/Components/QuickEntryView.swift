@@ -13,6 +13,7 @@ struct QuickEntryView: View {
     @State private var receiptAlertTitle = ""
     @State private var receiptAlertMessage = ""
     @State private var showingReceiptAlert = false
+    @State private var pendingReceiptExpenseID: UUID?
 
     private let quickCategories: [ExpenseCategory] = ExpenseCategory.allCases
 
@@ -49,16 +50,21 @@ struct QuickEntryView: View {
                     isPresented: $showingVendorEntry,
                     initialVendor: nil,
                     amount: amount
-                ) { vendor, category in
+                ) { vendor, category, createdExpense in
                     Task {
                         if let category = category {
                             await recordExpense(vendor: vendor, amount: amount, category: category)
                         } else {
-                            // Known vendor - already logged
                             await MainActor.run {
                                 withAnimation(.spring()) {
                                     selectedAmount = nil
                                     selectedCategory = nil
+                                }
+                                if settings.receiptStorageEnabled, let created = createdExpense {
+                                    pendingReceiptExpenseID = created.id
+                                    showingReceiptCapture = true
+                                } else {
+                                    pendingReceiptExpenseID = nil
                                 }
                             }
                         }
@@ -142,36 +148,41 @@ struct QuickEntryView: View {
     }
 
     private func recordExpense(vendor: String, amount: Decimal, category: ExpenseCategory) async {
-        await budgetViewModel.addExpense(vendor: vendor, amount: amount, category: category)
+        let created = await budgetViewModel.addExpense(vendor: vendor, amount: amount, category: category)
         await MainActor.run {
             withAnimation(.spring()) {
                 selectedAmount = nil
                 selectedCategory = nil
             }
             if settings.receiptStorageEnabled {
+                pendingReceiptExpenseID = created.id
                 showingReceiptCapture = true
+            } else {
+                pendingReceiptExpenseID = nil
             }
         }
     }
 
     private func handleReceiptCaptureResult(_ image: UIImage?) {
         showingReceiptCapture = false
-        guard let image else { return }
+        guard let expenseID = pendingReceiptExpenseID else { return }
+        guard let image else {
+            pendingReceiptExpenseID = nil
+            return
+        }
 
-        ReceiptStorageService.save(image: image) { result in
-            switch result {
-            case .success:
-                receiptAlertTitle = "Receipt Saved"
-                receiptAlertMessage = "Your receipt photo has been stored in Photos."
+        Task {
+            let success = await budgetViewModel.attachReceipt(image: image, to: expenseID)
+            await MainActor.run {
+                if success {
+                    receiptAlertTitle = "Receipt Saved"
+                    receiptAlertMessage = "Your receipt photo has been stored in BusyBee."
+                } else {
+                    receiptAlertTitle = "Save Failed"
+                    receiptAlertMessage = "We couldn't save your receipt. Please try again."
+                }
                 showingReceiptAlert = true
-            case .denied:
-                receiptAlertTitle = "Permission Needed"
-                receiptAlertMessage = "Enable photo access in Settings to save receipts."
-                showingReceiptAlert = true
-            case .failure:
-                receiptAlertTitle = "Save Failed"
-                receiptAlertMessage = "We couldn't save your receipt. Please try again."
-                showingReceiptAlert = true
+                pendingReceiptExpenseID = nil
             }
         }
     }

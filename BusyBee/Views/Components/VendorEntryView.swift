@@ -4,7 +4,7 @@ struct VendorEntryView: View {
     @Binding var isPresented: Bool
     var initialVendor: String?
     var amount: Decimal
-    var onComplete: (String, ExpenseCategory?) -> Void
+    var onComplete: (String, ExpenseCategory?, Expense?) -> Void
 
     @EnvironmentObject private var budgetViewModel: BudgetViewModel
     @EnvironmentObject private var settings: AppSettings
@@ -39,8 +39,13 @@ struct VendorEntryView: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                             ForEach(topVendors, id: \.id) { vendor in
                                 CommonVendorTile(vendor: vendor, displayName: settings.displayName(for: vendor.category)) {
-                                    onComplete(vendor.vendor, nil) // nil means auto-log with known category
-                                    isPresented = false
+                                    Task {
+                                        let created = await budgetViewModel.addExpenseWithKnownVendor(vendor: vendor.vendor, amount: amount)
+                                        await MainActor.run {
+                                            onComplete(vendor.vendor, nil, created)
+                                            isPresented = false
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -92,8 +97,8 @@ struct VendorEntryView: View {
                 CategorySelectionView(
                     vendorName: vendorName,
                     amount: amount,
-                    onComplete: { vendor, category in
-                        onComplete(vendor, category)
+                    onComplete: { vendor, category, created in
+                        onComplete(vendor, category, created)
                         isPresented = false
                     }
                 )
@@ -136,9 +141,9 @@ struct VendorEntryView: View {
         if isKnownVendor {
             // Known vendor - auto-log immediately
             Task {
-                let success = await budgetViewModel.addExpenseWithKnownVendor(vendor: trimmed, amount: amount)
-                if success {
-                    onComplete(trimmed, nil)
+                let created = await budgetViewModel.addExpenseWithKnownVendor(vendor: trimmed, amount: amount)
+                await MainActor.run {
+                    onComplete(trimmed, nil, created)
                     isPresented = false
                 }
             }
@@ -181,7 +186,7 @@ private struct CommonVendorTile: View {
 private struct CategorySelectionView: View {
     let vendorName: String
     let amount: Decimal
-    let onComplete: (String, ExpenseCategory) -> Void
+    let onComplete: (String, ExpenseCategory, Expense?) -> Void
     
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
@@ -208,7 +213,7 @@ private struct CategorySelectionView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                     ForEach(categories, id: \.self) { category in
                         Button(action: {
-                            onComplete(vendorName, category)
+                            onComplete(vendorName, category, nil)
                             dismiss()
                         }) {
                             Text(settings.displayName(for: category))
@@ -246,7 +251,7 @@ struct VendorEntryView_Previews: PreviewProvider {
     static var previews: some View {
         let settings = AppSettings.shared
         let store = DailyLimitStore.shared
-        VendorEntryView(isPresented: .constant(true), initialVendor: "", amount: Decimal(25.50), onComplete: { _, _ in })
+        VendorEntryView(isPresented: .constant(true), initialVendor: "", amount: Decimal(25.50), onComplete: { _, _, _ in })
             .environmentObject(BudgetViewModel(dailyLimitStore: store, settings: settings))
             .environmentObject(settings)
     }

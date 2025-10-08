@@ -44,6 +44,11 @@ final class SpeechRecognizer: ObservableObject {
 
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+        guard recordingFormat.channelCount > 0, recordingFormat.sampleRate > 0 else {
+            print("SpeechRecognizer: invalid audio input format (channels: \(recordingFormat.channelCount), sampleRate: \(recordingFormat.sampleRate))")
+            stopTranscribing()
+            return
+        }
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             self?.recognitionRequest?.append(buffer)
         }

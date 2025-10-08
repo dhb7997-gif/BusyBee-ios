@@ -16,6 +16,8 @@ struct VoiceExpenseEntryView: View {
     @State private var isSaving = false
     @State private var showPermissionAlert = false
     @State private var authorizationChecked = false
+    @State private var amountWasEdited = false
+    @State private var isApplyingAmountFromParser = false
 
     var body: some View {
         NavigationView {
@@ -83,6 +85,11 @@ struct VoiceExpenseEntryView: View {
             Section(header: Text("Amount")) {
                 TextField("0.00", text: $amountString)
                     .keyboardType(.decimalPad)
+                    .onChange(of: amountString) { _ in
+                        if !isApplyingAmountFromParser {
+                            amountWasEdited = true
+                        }
+                    }
             }
 
             Section(header: Text("Vendor")) {
@@ -148,6 +155,7 @@ struct VoiceExpenseEntryView: View {
             do {
                 try speechRecognizer.startTranscribing()
                 isRecording = true
+                amountWasEdited = false
             } catch {
                 showPermissionAlert = true
             }
@@ -156,8 +164,13 @@ struct VoiceExpenseEntryView: View {
 
     private func updateFromTranscript(_ text: String) {
         let parsed = VoiceExpenseParser.parse(text, settings: settings)
-        if let amount = parsed.amount, amountString.isEmpty {
-            amountString = NSDecimalNumber(decimal: amount).stringValue
+        if let amount = parsed.amount {
+            let normalizedCurrent = amountString.filter { !$0.isWhitespace }
+            let currentDecimal = Decimal(string: normalizedCurrent)
+            let shouldUpdate = !amountWasEdited && (amountString.isEmpty || currentDecimal == nil || currentDecimal != amount)
+            if shouldUpdate {
+                applyAmountFromParser(amount)
+            }
         }
         if let vendorName = parsed.vendor, vendor.isEmpty {
             vendor = vendorName
@@ -176,7 +189,7 @@ struct VoiceExpenseEntryView: View {
     private func saveExpense() async {
         guard let amount = Decimal(string: amountString.filter { !$0.isWhitespace }) else { return }
         isSaving = true
-        await budgetViewModel.addExpense(vendor: vendor.trimmingCharacters(in: .whitespacesAndNewlines), amount: amount, category: selectedCategory)
+        _ = await budgetViewModel.addExpense(vendor: vendor.trimmingCharacters(in: .whitespacesAndNewlines), amount: amount, category: selectedCategory)
         await MainActor.run {
             isSaving = false
             dismiss()
@@ -185,6 +198,15 @@ struct VoiceExpenseEntryView: View {
 
     private var placeholderText: String {
         "Tap the microphone and say something like: $12.80 at Starbucks - Food"
+    }
+
+    private func applyAmountFromParser(_ amount: Decimal) {
+        isApplyingAmountFromParser = true
+        amountString = NSDecimalNumber(decimal: amount).stringValue
+        amountWasEdited = false
+        DispatchQueue.main.async {
+            isApplyingAmountFromParser = false
+        }
     }
 }
 

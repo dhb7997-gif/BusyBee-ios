@@ -2,13 +2,24 @@ import SwiftUI
 
 struct ExpenseRow: View {
     let expense: Expense
+    var onReceiptTapped: ((Expense) -> Void)? = nil
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(expense.vendor)
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(expense.vendor)
+                        .font(.headline)
+                    if expense.hasReceipt {
+                        Button(action: { onReceiptTapped?(expense) }) {
+                            Image(systemName: "paperclip")
+                                .foregroundColor(.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("View receipt"))
+                    }
+                }
                 HStack(spacing: 8) {
                     Text("\(categoryEmoji(for: expense.category)) \(settings.displayName(for: expense.category))")
                         .font(.caption.weight(.semibold))

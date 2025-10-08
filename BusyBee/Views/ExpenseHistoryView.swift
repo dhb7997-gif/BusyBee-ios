@@ -6,6 +6,8 @@ struct ExpenseHistoryView: View {
     @State private var selectedFilter: ExpenseHistoryFilter = .today
     @State private var showingAddExpense: Bool = false
     @State private var pulseSummary: Bool = false
+    @State private var receiptPreviewExpense: Expense?
+    @State private var showingReceiptViewer = false
 
     var body: some View {
         NavigationView {
@@ -15,7 +17,10 @@ struct ExpenseHistoryView: View {
                 ForEach(historySections) { section in
                     Section(header: Text(section.formattedDate)) {
                         ForEach(section.items) { expense in
-                            ExpenseRow(expense: expense)
+                            ExpenseRow(expense: expense) { selected in
+                                receiptPreviewExpense = selected
+                                showingReceiptViewer = true
+                            }
                         }
                         .onDelete { indexSet in
                             deleteExpenses(indexSet, in: section)
@@ -51,6 +56,12 @@ struct ExpenseHistoryView: View {
                 AddExpenseView(isPresented: $showingAddExpense, showDatePicker: true)
                     .environmentObject(budgetViewModel)
                     .environmentObject(settings)
+            }
+            .sheet(isPresented: $showingReceiptViewer, onDismiss: { receiptPreviewExpense = nil }) {
+                if let expense = receiptPreviewExpense {
+                    ReceiptViewerView(expense: expense)
+                        .environmentObject(budgetViewModel)
+                }
             }
         }
     }

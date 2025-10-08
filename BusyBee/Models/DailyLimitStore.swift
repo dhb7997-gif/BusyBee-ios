@@ -31,7 +31,7 @@ class DailyLimitStore: ObservableObject {
     }
 
     func getDailyLimit(for date: Date) -> Decimal {
-        guard !entries.isEmpty else { return 200 }
+        guard !entries.isEmpty else { return 25 }
         let normalizedDate = Calendar.current.startOfDay(for: date)
         if let earliest = earliestEntryDate, normalizedDate < earliest {
             return .zero
@@ -39,7 +39,7 @@ class DailyLimitStore: ObservableObject {
         if let match = entries.last(where: { Calendar.current.startOfDay(for: $0.date) <= normalizedDate }) {
             return match.dailyLimit
         }
-        return entries.first?.dailyLimit ?? 200
+        return entries.first?.dailyLimit ?? 25
     }
 
     func recordDailyLimit(_ limit: Decimal, for date: Date) {

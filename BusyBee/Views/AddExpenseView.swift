@@ -13,6 +13,7 @@ struct AddExpenseView: View {
     @State private var receiptAlertTitle = ""
     @State private var receiptAlertMessage = ""
     @State private var showingReceiptAlert = false
+    @State private var pendingReceiptExpenseID: UUID?
 
     var body: some View {
         NavigationView {
@@ -86,39 +87,40 @@ struct AddExpenseView: View {
 
     private func saveExpense() async {
         guard let expense = viewModel.makeExpense(date: selectedDate) else { return }
-        await budgetViewModel.addExpense(vendor: expense.vendor, amount: expense.amount, category: expense.category, notes: expense.notes, date: expense.date)
+        let created = await budgetViewModel.addExpense(vendor: expense.vendor, amount: expense.amount, category: expense.category, notes: expense.notes, date: expense.date)
         await MainActor.run {
             viewModel.reset()
             selectedDate = Date()
+            pendingReceiptExpenseID = created.id
             if settings.receiptStorageEnabled {
                 showingReceiptCapture = true
             } else {
                 isPresented = false
+                pendingReceiptExpenseID = nil
             }
         }
     }
 
     private func handleReceiptCaptureResult(_ image: UIImage?) {
         showingReceiptCapture = false
-        guard let image else {
+        guard let image, let expenseID = pendingReceiptExpenseID else {
             isPresented = false
+            pendingReceiptExpenseID = nil
             return
         }
 
-        ReceiptStorageService.save(image: image) { result in
-            switch result {
-            case .success:
-                receiptAlertTitle = "Receipt Saved"
-                receiptAlertMessage = "Your receipt photo has been stored in Photos."
+        Task {
+            let success = await budgetViewModel.attachReceipt(image: image, to: expenseID)
+            await MainActor.run {
+                if success {
+                    receiptAlertTitle = "Receipt Saved"
+                    receiptAlertMessage = "Your receipt photo has been stored in BusyBee."
+                } else {
+                    receiptAlertTitle = "Save Failed"
+                    receiptAlertMessage = "We couldn't save your receipt. Please try again."
+                }
                 showingReceiptAlert = true
-            case .denied:
-                receiptAlertTitle = "Permission Needed"
-                receiptAlertMessage = "Enable photo access in Settings to save receipts."
-                showingReceiptAlert = true
-            case .failure:
-                receiptAlertTitle = "Save Failed"
-                receiptAlertMessage = "We couldn't save your receipt. Please try again."
-                showingReceiptAlert = true
+                pendingReceiptExpenseID = nil
             }
         }
     }

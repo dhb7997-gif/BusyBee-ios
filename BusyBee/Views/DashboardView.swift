@@ -10,6 +10,10 @@ struct DashboardView: View {
     @State private var manualReceiptAlertTitle = ""
     @State private var manualReceiptAlertMessage = ""
     @State private var showingManualReceiptAlert = false
+    @State private var showingExpensePicker = false
+    @State private var pendingManualReceiptExpenseID: UUID?
+    @State private var receiptPreviewExpense: Expense?
+    @State private var showingReceiptViewer = false
 
     var body: some View {
         NavigationView {
@@ -21,8 +25,14 @@ struct DashboardView: View {
                         budgetPeriod: settings.budgetPeriod
                     )
                     QuickEntryView()
-                    RecentExpensesList(expenses: Array(budgetViewModel.expenses.prefix(5)))
-                    Button(action: { showingManualReceiptCapture = true }) {
+                    RecentExpensesList(expenses: Array(budgetViewModel.expenses.prefix(5))) { expense in
+                        receiptPreviewExpense = expense
+                        showingReceiptViewer = true
+                    }
+                    Button(action: {
+                        pendingManualReceiptExpenseID = nil
+                        showingExpensePicker = true
+                    }) {
                         HStack {
                             Image(systemName: "camera.fill")
                             Text("Capture Receipt")
@@ -34,6 +44,8 @@ struct DashboardView: View {
                         .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
                     .accessibilityLabel(Text("Capture receipt photo"))
+                    .disabled(budgetViewModel.expenses.isEmpty)
+                    .opacity(budgetViewModel.expenses.isEmpty ? 0.5 : 1)
                 }
                 .padding(.vertical, 16)
                 .padding(.horizontal, 16)
@@ -63,9 +75,23 @@ struct DashboardView: View {
                 .environmentObject(budgetViewModel)
                 .environmentObject(settings)
         }
+        .sheet(isPresented: $showingExpensePicker) {
+            ReceiptExpensePickerView(expenses: budgetViewModel.expenses) { expense in
+                pendingManualReceiptExpenseID = expense.id
+                showingExpensePicker = false
+                showingManualReceiptCapture = true
+            }
+            .environmentObject(settings)
+        }
         .sheet(isPresented: $showingManualReceiptCapture) {
             ReceiptCaptureView { image in
                 handleManualReceiptCapture(image)
+            }
+        }
+        .sheet(isPresented: $showingReceiptViewer, onDismiss: { receiptPreviewExpense = nil }) {
+            if let expense = receiptPreviewExpense {
+                ReceiptViewerView(expense: expense)
+                    .environmentObject(budgetViewModel)
             }
         }
         .alert(manualReceiptAlertTitle, isPresented: $showingManualReceiptAlert) {
@@ -78,6 +104,7 @@ struct DashboardView: View {
 
 private struct RecentExpensesList: View {
     let expenses: [Expense]
+    var onReceiptTapped: (Expense) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -89,7 +116,7 @@ private struct RecentExpensesList: View {
                     .multilineTextAlignment(.leading)
             } else {
                 ForEach(expenses, id: \.id) { expense in
-                    ExpenseRow(expense: expense)
+                    ExpenseRow(expense: expense, onReceiptTapped: onReceiptTapped)
                     Divider()
                 }
             }
@@ -114,21 +141,25 @@ struct DashboardView_Previews: PreviewProvider {
 private extension DashboardView {
     func handleManualReceiptCapture(_ image: UIImage?) {
         showingManualReceiptCapture = false
-        guard let image else { return }
+        guard let expenseID = pendingManualReceiptExpenseID else { return }
+        guard let image else {
+            pendingManualReceiptExpenseID = nil
+            return
+        }
 
-        ReceiptStorageService.save(image: image) { result in
-            switch result {
-            case .success:
-                manualReceiptAlertTitle = "Receipt Saved"
-                manualReceiptAlertMessage = "Your receipt photo has been stored in Photos."
-            case .denied:
-                manualReceiptAlertTitle = "Permission Needed"
-                manualReceiptAlertMessage = "Enable photo access in Settings to save receipts."
-            case .failure:
-                manualReceiptAlertTitle = "Save Failed"
-                manualReceiptAlertMessage = "We couldn't save your receipt. Please try again."
+        Task {
+            let success = await budgetViewModel.attachReceipt(image: image, to: expenseID)
+            await MainActor.run {
+                if success {
+                    manualReceiptAlertTitle = "Receipt Saved"
+                    manualReceiptAlertMessage = "Your receipt photo has been stored in BusyBee."
+                } else {
+                    manualReceiptAlertTitle = "Save Failed"
+                    manualReceiptAlertMessage = "We couldn't save your receipt. Please try again."
+                }
+                showingManualReceiptAlert = true
+                pendingManualReceiptExpenseID = nil
             }
-            showingManualReceiptAlert = true
         }
     }
 }
