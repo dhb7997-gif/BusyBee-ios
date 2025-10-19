@@ -85,7 +85,7 @@ struct VoiceExpenseEntryView: View {
             Section(header: Text("Amount")) {
                 TextField("0.00", text: $amountString)
                     .keyboardType(.decimalPad)
-                    .onChange(of: amountString) { _ in
+                    .onChange(of: amountString) { oldValue, newValue in
                         if !isApplyingAmountFromParser {
                             amountWasEdited = true
                         }

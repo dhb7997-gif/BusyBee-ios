@@ -5,14 +5,22 @@ enum ReceiptFileStoreError: Error {
     case writeFailed
     case readFailed
     case deleteFailed
+    case imageTooLarge
+    case insufficientStorage
+    case directoryAccessFailed
 }
 
 actor ReceiptFileStore {
     static let shared = ReceiptFileStore()
 
     private let fileManager = FileManager.default
-    private var receiptsDirectory: URL {
-        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+    private let maxImageSizeBytes: Int = 10 * 1024 * 1024 // 10MB
+    private let minRequiredStorageBytes: Int64 = 50 * 1024 * 1024 // 50MB minimum free space
+
+    private var receiptsDirectory: URL? {
+        guard let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
         var directory = base.appendingPathComponent("Receipts", isDirectory: true)
         if !fileManager.fileExists(atPath: directory.path) {
             try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -24,19 +32,50 @@ actor ReceiptFileStore {
     }
 
     func save(image: UIImage, for expenseID: UUID) throws {
-        guard let data = image.jpegData(compressionQuality: 0.9) else {
+        // Check directory access
+        guard let directory = receiptsDirectory else {
+            throw ReceiptFileStoreError.directoryAccessFailed
+        }
+
+        // Check available storage space
+        if let availableSpace = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+            if availableSpace < minRequiredStorageBytes {
+                throw ReceiptFileStoreError.insufficientStorage
+            }
+        }
+
+        // Try to get image data with progressive compression
+        var compressionQuality: CGFloat = 0.9
+        var data = image.jpegData(compressionQuality: compressionQuality)
+
+        // If initial data is too large, progressively compress
+        while let imageData = data, imageData.count > maxImageSizeBytes && compressionQuality > 0.1 {
+            compressionQuality -= 0.1
+            data = image.jpegData(compressionQuality: compressionQuality)
+        }
+
+        guard let finalData = data else {
             throw ReceiptFileStoreError.writeFailed
         }
-        let url = urlForReceipt(id: expenseID)
+
+        // Final check - if still too large after maximum compression, reject
+        if finalData.count > maxImageSizeBytes {
+            throw ReceiptFileStoreError.imageTooLarge
+        }
+
+        let url = urlForReceipt(id: expenseID, in: directory)
         do {
-            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            try finalData.write(to: url, options: [.atomic, .completeFileProtection])
         } catch {
             throw ReceiptFileStoreError.writeFailed
         }
     }
 
     func load(for expenseID: UUID) throws -> UIImage {
-        let url = urlForReceipt(id: expenseID)
+        guard let directory = receiptsDirectory else {
+            throw ReceiptFileStoreError.directoryAccessFailed
+        }
+        let url = urlForReceipt(id: expenseID, in: directory)
         guard fileManager.fileExists(atPath: url.path) else { throw ReceiptFileStoreError.readFailed }
         guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
             throw ReceiptFileStoreError.readFailed
@@ -45,17 +84,19 @@ actor ReceiptFileStore {
     }
 
     func delete(for expenseID: UUID) {
-        let url = urlForReceipt(id: expenseID)
+        guard let directory = receiptsDirectory else { return }
+        let url = urlForReceipt(id: expenseID, in: directory)
         if fileManager.fileExists(atPath: url.path) {
             try? fileManager.removeItem(at: url)
         }
     }
 
     func receiptExists(for expenseID: UUID) -> Bool {
-        fileManager.fileExists(atPath: urlForReceipt(id: expenseID).path)
+        guard let directory = receiptsDirectory else { return false }
+        return fileManager.fileExists(atPath: urlForReceipt(id: expenseID, in: directory).path)
     }
 
-    private func urlForReceipt(id: UUID) -> URL {
-        receiptsDirectory.appendingPathComponent("\(id.uuidString).jpg")
+    private func urlForReceipt(id: UUID, in directory: URL) -> URL {
+        directory.appendingPathComponent("\(id.uuidString).jpg")
     }
 }
