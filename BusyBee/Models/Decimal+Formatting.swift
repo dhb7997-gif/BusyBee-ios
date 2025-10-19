@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 extension Decimal {
     private static let currencyFormatter: NumberFormatter = {
@@ -16,6 +17,8 @@ extension Decimal {
 }
 
 struct CSVExporter {
+    private static let logger = Logger(subsystem: "com.caerusfund.busybee", category: "export")
+
     static func exportMonthly(expenses: [Expense]) async -> URL? {
         let header = "id,vendor,amount,category,date,dayOfWeek,notes\n"
         let rows = expenses.map { expense -> String in
@@ -43,7 +46,7 @@ struct CSVExporter {
             try data.write(to: url, options: .atomic)
             return url
         } catch {
-            print("Failed to write CSV: \(error)")
+            logger.error("Failed to write CSV: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

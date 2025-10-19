@@ -29,7 +29,7 @@ actor ReceiptFileStore {
         }
         let url = urlForReceipt(id: expenseID)
         do {
-            try data.write(to: url, options: .atomic)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
         } catch {
             throw ReceiptFileStoreError.writeFailed
         }

@@ -1,7 +1,9 @@
 import Foundation
 import Combine
+import os
 
 actor AchievementsStore {
+    private let logger = Logger(subsystem: "com.caerusfund.busybee", category: "achievements")
     private let url: URL
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
@@ -26,7 +28,7 @@ actor AchievementsStore {
             let data = try encoder.encode(achievements)
             try data.write(to: url, options: .atomic)
         } catch {
-            print("Failed to save achievements: \(error)")
+            logger.error("Failed to save achievements: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

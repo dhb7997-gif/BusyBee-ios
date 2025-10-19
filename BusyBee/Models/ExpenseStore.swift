@@ -21,6 +21,6 @@ actor ExpenseStore {
 
     func save(_ expenses: [Expense]) async throws {
         let data = try encoder.encode(expenses)
-        try data.write(to: storageURL, options: [.atomic])
+        try data.write(to: storageURL, options: [.atomic, .completeFileProtection])
     }
 }

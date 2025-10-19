@@ -89,6 +89,6 @@ actor VendorTracker {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(usages)
-        try data.write(to: storageURL, options: [.atomic])
+        try data.write(to: storageURL, options: [.atomic, .completeFileProtection])
     }
 }

@@ -1,11 +1,13 @@
 import Foundation
 import Combine
 import UserNotifications
+import os
 
 @MainActor
 class NotificationManager: ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
-    
+    private let logger = Logger(subsystem: "com.caerusfund.busybee", category: "notifications")
+
     static let shared = NotificationManager()
 
     private init() {}
@@ -29,9 +31,9 @@ class NotificationManager: ObservableObject {
         let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
         let request = UNNotificationRequest(identifier: "morning-reminder", content: content, trigger: trigger)
         
-        UNUserNotificationCenter.current().add(request) { error in
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
             if let error = error {
-                print("Morning reminder error: \(error)")
+                self?.logger.error("Morning reminder error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -55,9 +57,9 @@ class NotificationManager: ObservableObject {
         let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
         let request = UNNotificationRequest(identifier: "end-of-day-summary", content: content, trigger: trigger)
         
-        UNUserNotificationCenter.current().add(request) { error in
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
             if let error = error {
-                print("End of day summary error: \(error)")
+                self?.logger.error("End of day summary error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -76,9 +78,9 @@ class NotificationManager: ObservableObject {
     private func requestPermissionIfNeeded() {
         guard !permissionRequested else { return }
         permissionRequested = true
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { [weak self] granted, error in
             if let error = error {
-                print("Notification permission error: \(error)")
+                self?.logger.error("Notification permission error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

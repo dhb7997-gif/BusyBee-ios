@@ -1,9 +1,11 @@
 import Foundation
 import Combine
 import UIKit
+import os
 
 @MainActor
 final class BudgetViewModel: ObservableObject {
+    private let logger = Logger(subsystem: "com.caerusfund.busybee", category: "budget")
     @Published private(set) var expenses: [Expense] = []
     @Published var dailyLimit: Decimal
     @Published private(set) var allowanceAmount: Decimal
@@ -65,7 +67,7 @@ final class BudgetViewModel: ObservableObject {
             do {
                 try await vendorTracker.load()
             } catch {
-                print("Failed to load vendor tracker: \(error)")
+                logger.error("Failed to load vendor tracker: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -76,7 +78,7 @@ final class BudgetViewModel: ObservableObject {
             expenses = loaded.sorted { $0.date > $1.date }
             recalculateBudget()
         } catch {
-            print("Failed to load expenses: \(error)")
+            logger.error("Failed to load expenses: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -93,7 +95,7 @@ final class BudgetViewModel: ObservableObject {
         do {
             try await vendorTracker.recordUsage(vendor: vendor, category: category)
         } catch {
-            print("Failed to record vendor usage: \(error)")
+            logger.error("Failed to record vendor usage: \(error.localizedDescription, privacy: .public)")
         }
 
         recalculateBudget()
@@ -116,7 +118,7 @@ final class BudgetViewModel: ObservableObject {
             await persist()
             return true
         } catch {
-            print("Failed to save receipt: \(error)")
+            logger.error("Failed to save receipt: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -327,7 +329,10 @@ final class BudgetViewModel: ObservableObject {
         case .weekly:
             return 7
         case .monthly:
-            let range = calendar.range(of: .day, in: .month, for: date)!
+            guard let range = calendar.range(of: .day, in: .month, for: date) else {
+                // Fallback to 30 days if calendar range cannot be determined
+                return 30
+            }
             return Decimal(range.count)
         }
     }
@@ -392,7 +397,7 @@ final class BudgetViewModel: ObservableObject {
         do {
             try await expenseStore.save(expenses)
         } catch {
-            print("Failed to save expenses: \(error)")
+            logger.error("Failed to save expenses: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

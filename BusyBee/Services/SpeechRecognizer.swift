@@ -2,9 +2,11 @@ import Foundation
 import Combine
 import Speech
 import AVFoundation
+import os
 
 @MainActor
 final class SpeechRecognizer: ObservableObject {
+    private let logger = Logger(subsystem: "com.caerusfund.busybee", category: "speech")
     @Published private(set) var transcript: String = ""
     @Published private(set) var authorizationStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
 
@@ -45,7 +47,7 @@ final class SpeechRecognizer: ObservableObject {
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
         guard recordingFormat.channelCount > 0, recordingFormat.sampleRate > 0 else {
-            print("SpeechRecognizer: invalid audio input format (channels: \(recordingFormat.channelCount), sampleRate: \(recordingFormat.sampleRate))")
+            logger.error("Invalid audio input format - channels: \(recordingFormat.channelCount, privacy: .public), sampleRate: \(recordingFormat.sampleRate, privacy: .public)")
             stopTranscribing()
             return
         }
