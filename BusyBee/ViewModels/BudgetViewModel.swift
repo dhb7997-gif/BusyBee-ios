@@ -152,13 +152,9 @@ final class BudgetViewModel: ObservableObject {
     }
 
     func rolloverAmount(for date: Date) -> Decimal {
-        guard !dailyLimitStore.isEmpty else { return .zero }
-        let previousDay = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: date)) ?? date
-        let previousExpenses = expenses.filter { calendar.isDate($0.date, inSameDayAs: previousDay) }
-        let previousTotal = previousExpenses.reduce(Decimal.zero) { $0 + $1.amount }
-        let historicalDailyLimit = dailyLimitStore.getDailyLimit(for: previousDay)
-        let remaining = historicalDailyLimit - previousTotal
-        return max(remaining, .zero)
+        let currentDay = calendar.startOfDay(for: date)
+        guard let previousDay = calendar.date(byAdding: .day, value: -1, to: currentDay) else { return .zero }
+        return endingBalance(for: previousDay)
     }
 
     func suggestedVendors(limit: Int = 6) -> [String] {
@@ -213,6 +209,37 @@ final class BudgetViewModel: ObservableObject {
             return nil
         }
         return await addExpense(vendor: vendor, amount: amount, category: category)
+    }
+
+    private func endingBalance(for date: Date) -> Decimal {
+        let targetDay = calendar.startOfDay(for: date)
+
+        // Establish the earliest day we need to evaluate to honor historical rollovers.
+        let earliestExpenseDay = expenses.map { calendar.startOfDay(for: $0.date) }.min()
+        let earliestLimitDay = dailyLimitStore.earliestEntryDate.map { calendar.startOfDay(for: $0) }
+        let candidates = [allowanceStartDate, targetDay, earliestExpenseDay, earliestLimitDay].compactMap { $0 }
+        guard let initialDay = candidates.min() else { return .zero }
+
+        var currentDay = initialDay
+        var carryOver: Decimal = .zero
+
+        while currentDay <= targetDay {
+            let dailyLimit = dailyLimitStore.getDailyLimit(for: currentDay)
+            let spent = totalSpent(on: currentDay)
+            let ending = dailyLimit + carryOver - spent
+
+            if calendar.isDate(currentDay, inSameDayAs: targetDay) {
+                return ending
+            }
+
+            carryOver = ending
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else { break }
+            currentDay = nextDay
+        }
+
+        let dailyLimit = dailyLimitStore.getDailyLimit(for: targetDay)
+        let spent = totalSpent(on: targetDay)
+        return dailyLimit + carryOver - spent
     }
 
     private func observeChanges() {
